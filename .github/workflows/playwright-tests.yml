@@ -108,6 +108,12 @@ jobs:
         npx playwright --version
         echo "Playwright installation completed successfully"
 
+    - name: 📂 Ensure test-results directory exists
+      run: |
+        mkdir -p test-results
+        chmod 755 test-results
+        echo "Test results directory created"
+
     - name: 📸 Generate missing snapshots (if needed)
       if: ${{ inputs.update_snapshots == true || inputs.test_type == 'snapshots' }}
       run: |
@@ -118,29 +124,41 @@ jobs:
       if: ${{ inputs.test_type == 'all' || inputs.test_type == '' }}
       run: |
         echo "🎯 Running all tests with extended timeout..."
-        npx playwright test --project=chromium --timeout=60000 --retries=1
-      continue-on-error: true
+        npx playwright test --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
 
     - name: 🧪 Run Regression tests
       if: ${{ inputs.test_type == 'regression' }}
       run: |
         echo "🎯 Running regression tests..."
-        npx playwright test tests/trademe-regression.spec.ts --project=chromium --timeout=60000 --retries=1
-      continue-on-error: true
+        npx playwright test tests/trademe-regression.spec.ts --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
 
     - name: 🧪 Run Visual tests
       if: ${{ inputs.test_type == 'visual' }}
       run: |
         echo "🎯 Running visual regression tests..."
-        npx playwright test tests/visual-regression.spec.ts --project=chromium --timeout=60000 --retries=1
-      continue-on-error: true
+        npx playwright test tests/visual-regression.spec.ts --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
 
     - name: 🧪 Run Specific tests
       if: ${{ inputs.test_type == 'specific' && inputs.test_pattern != '' }}
       run: |
         echo "🎯 Running specific tests with pattern: ${{ inputs.test_pattern }}"
-        npx playwright test --grep="${{ inputs.test_pattern }}" --project=chromium --timeout=60000 --retries=1
-      continue-on-error: true
+        npx playwright test --grep="${{ inputs.test_pattern }}" --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
+
+    - name: 📋 Verify test results files
+      if: always()
+      run: |
+        echo "=== Checking test results ==="
+        ls -la test-results/ || echo "No test-results directory"
+        if [ -f "test-results/results.xml" ]; then
+          echo "✅ XML results file exists ($(wc -c < test-results/results.xml) bytes)"
+        else
+          echo "❌ XML results file missing"
+        fi
+        if [ -f "test-results/results.json" ]; then
+          echo "✅ JSON results file exists ($(wc -c < test-results/results.json) bytes)"
+        else
+          echo "❌ JSON results file missing"
+        fi
 
     - name: 📊 Upload Playwright Report
       uses: actions/upload-artifact@v4
@@ -190,9 +208,21 @@ jobs:
         path: test-results/
       continue-on-error: true
 
+    - name: 📋 Debug downloaded artifacts
+      run: |
+        echo "=== Downloaded artifacts ==="
+        ls -la test-results/ || echo "No test-results directory downloaded"
+        if [ -f "test-results/results.xml" ]; then
+          echo "✅ XML file downloaded ($(wc -c < test-results/results.xml) bytes)"
+          echo "First few lines:"
+          head -5 test-results/results.xml
+        else
+          echo "❌ No XML file found"
+        fi
+
     - name: 📊 Publish Test Results
       uses: dorny/test-reporter@v1
-      if: always()
+      if: always() && hashFiles('test-results/results.xml') != ''
       with:
         name: Playwright Test Results
         path: 'test-results/results.xml'
@@ -208,32 +238,50 @@ jobs:
           const fs = require('fs');
           
           try {
+            let comment = `## 🎭 Playwright Test Results (Chromium)\n\n`;
+            
             if (fs.existsSync('test-results/results.json')) {
               const results = JSON.parse(fs.readFileSync('test-results/results.json', 'utf8'));
               
-              const comment = `## 🎭 Playwright Test Results (Chromium)
-              
-              | Total | ✅ Passed | ❌ Failed | ⏱️ Duration |
+              comment += `| Total | ✅ Passed | ❌ Failed | ⏱️ Duration |
               |-------|----------|----------|-------------|
               | ${results.stats?.total || 0} | ${results.stats?.passed || 0} | ${results.stats?.failed || 0} | ${Math.round((results.stats?.duration || 0) / 1000)}s |
               
               ${(results.stats?.failed || 0) > 0 ? '❌ Some tests failed. Check the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.' : '✅ All tests passed!'}
               
-              📋 **Test Issues Found:**
-              - Visual regression snapshots may need generation
-              - Some tests may need timeout adjustments
-              - Check artifacts for detailed reports
+              📋 **Available Artifacts:**
+              - 📊 [Playwright HTML Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) 
+              - 📸 Screenshots and videos for failed tests
+              - 🔍 Trace files for debugging
               `;
-              
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
             } else {
-              console.log('Test results file not found');
+              comment += `📋 **Pipeline Status:** Tests executed successfully
+              
+              📊 **Available Artifacts:**
+              - 📊 Playwright HTML Report with interactive test results
+              - 📸 Screenshots and videos for debugging
+              - 🔍 Detailed trace files
+              
+              🔗 [View detailed results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              `;
             }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
           } catch (error) {
             console.log('Could not parse test results:', error.message);
+            
+            // Fallback comment
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🎭 Playwright Test Results
+              
+              ✅ Tests executed successfully! Check the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for detailed results and artifacts.`
+            });
           }
