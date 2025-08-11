@@ -36,22 +36,44 @@ jobs:
       with:
         node-version: 18
 
-    - name: 📋 Verify package files
+    - name: 📋 Debug package files before cleanup
       run: |
+        echo "=== Before cleanup ==="
         echo "Package.json contents:"
         cat package.json
+        echo ""
         echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
+        if [ -f package-lock.json ]; then
+          echo "Package-lock.json size: $(wc -c < package-lock.json) bytes"
+        fi
         
-    - name: 🧹 Clean npm environment
+    - name: 🧹 Clean npm environment and remove corrupted files
       run: |
+        echo "=== Cleaning npm environment ==="
         # Remove existing lock file and node_modules to start fresh
-        rm -rf node_modules package-lock.json
+        rm -rf node_modules package-lock.json .npm
+        # Clean npm cache completely
         npm cache clean --force
+        # Verify cache is clean
+        npm cache verify
+        echo "Cleanup completed successfully"
         
-    - name: 📦 Install dependencies
+    - name: 📦 Install dependencies fresh
       run: |
-        # Install dependencies fresh - this will create a new lock file
-        npm install
+        echo "=== Installing dependencies from scratch ==="
+        # Install dependencies fresh - this will create a new lock file with correct checksums
+        npm install --no-audit --no-fund
+        echo "Dependencies installed successfully"
+        
+    - name: 📋 Debug package files after install
+      run: |
+        echo "=== After fresh install ==="
+        echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
+        if [ -f package-lock.json ]; then
+          echo "Package-lock.json size: $(wc -c < package-lock.json) bytes"
+          echo "Lock file version: $(node -e "console.log(require('./package-lock.json').lockfileVersion)")"
+        fi
+        echo "Node modules: $(ls -la node_modules | wc -l) entries"
         
     - name: 🔧 Update system packages  
       run: sudo apt-get update
