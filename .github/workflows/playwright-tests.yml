@@ -1,0 +1,217 @@
+name: 🎭 TradeMe Playwright Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of tests to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - regression
+        - visual
+        - specific
+      test_pattern:
+        description: 'Test pattern (for specific tests)'
+        required: false
+        default: ''
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit]
+        
+    steps:
+    - name: 🔄 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
+        cache: 'npm'
+
+    - name: 📦 Install dependencies
+      run: npm ci
+
+    - name: 🎭 Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: 🧪 Run Playwright tests - All
+      if: ${{ inputs.test_type == 'all' || inputs.test_type == '' }}
+      run: npx playwright test --project=${{ matrix.project }}
+
+    - name: 🧪 Run Regression tests
+      if: ${{ inputs.test_type == 'regression' }}
+      run: npx playwright test tests/trademe-regression.spec.ts --project=${{ matrix.project }}
+
+    - name: 🧪 Run Visual tests
+      if: ${{ inputs.test_type == 'visual' }}
+      run: npx playwright test tests/visual-regression.spec.ts --project=${{ matrix.project }}
+
+    - name: 🧪 Run Specific tests
+      if: ${{ inputs.test_type == 'specific' && inputs.test_pattern != '' }}
+      run: npx playwright test --grep="${{ inputs.test_pattern }}" --project=${{ matrix.project }}
+
+    - name: 📊 Upload Playwright Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-${{ matrix.project }}
+        path: playwright-report/
+        retention-days: 30
+
+    - name: 📋 Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.project }}
+        path: test-results/
+        retention-days: 30
+
+    - name: 📸 Upload Screenshots
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: screenshots-${{ matrix.project }}-${{ github.run_number }}
+        path: test-results/
+        retention-days: 7
+
+  test-mobile:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🔄 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
+        cache: 'npm'
+
+    - name: 📦 Install dependencies
+      run: npm ci
+
+    - name: 🎭 Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: 📱 Run Mobile tests
+      run: npx playwright test --project=mobile-chrome
+
+    - name: 📊 Upload Mobile Test Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report-mobile
+        path: playwright-report/
+        retention-days: 30
+
+  publish-results:
+    needs: [test, test-mobile]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: 🔄 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 📥 Download all artifacts
+      uses: actions/download-artifact@v4
+
+    - name: 📊 Publish Test Results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Playwright Test Results
+        path: 'test-results-*/results.xml'
+        reporter: java-junit
+        fail-on-error: false
+
+    - name: 💬 Comment PR with Test Results
+      uses: actions/github-script@v7
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Find test results
+          const findResults = (dir) => {
+            try {
+              if (fs.existsSync(path.join(dir, 'results.json'))) {
+                return JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8'));
+              }
+            } catch (e) {
+              console.log('No results found in', dir);
+            }
+            return null;
+          };
+          
+          const results = [];
+          const dirs = fs.readdirSync('.').filter(d => d.startsWith('test-results-'));
+          
+          for (const dir of dirs) {
+            const result = findResults(dir);
+            if (result) results.push({browser: dir.replace('test-results-', ''), ...result});
+          }
+          
+          if (results.length === 0) {
+            console.log('No test results found');
+            return;
+          }
+          
+          const totalTests = results.reduce((sum, r) => sum + (r.stats?.total || 0), 0);
+          const totalPassed = results.reduce((sum, r) => sum + (r.stats?.passed || 0), 0);
+          const totalFailed = results.reduce((sum, r) => sum + (r.stats?.failed || 0), 0);
+          
+          const comment = `## 🎭 Playwright Test Results
+          
+          | Browser | Total | ✅ Passed | ❌ Failed | ⏱️ Duration |
+          |---------|-------|----------|----------|-------------|
+          ${results.map(r => `| ${r.browser} | ${r.stats?.total || 0} | ${r.stats?.passed || 0} | ${r.stats?.failed || 0} | ${Math.round((r.stats?.duration || 0) / 1000)}s |`).join('\n')}
+          
+          **Overall: ${totalPassed}/${totalTests} tests passed**
+          
+          ${totalFailed > 0 ? '❌ Some tests failed. Check the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.' : '✅ All tests passed!'}
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  slack-notification:
+    needs: [test, test-mobile]
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: 📨 Slack Notification on Failure
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        text: |
+          🚨 TradeMe Automation Tests Failed!
+          
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+          
+          Check the workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
