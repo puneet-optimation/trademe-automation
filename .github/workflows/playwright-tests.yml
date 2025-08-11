@@ -37,10 +37,20 @@ jobs:
         node-version: 18
         cache: 'npm'
 
+    - name: 📋 Verify package files
+      run: |
+        echo "Package.json contents:"
+        cat package.json
+        echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
+        
     - name: 📦 Install dependencies
-      run: npm ci
-
-    - name: 🔧 Update system packages
+      run: |
+        # Verify npm cache and clean if needed
+        npm cache verify
+        # Install dependencies with exact versions from lock file
+        npm ci --no-audit --no-fund
+        
+    - name: 🔧 Update system packages  
       run: sudo apt-get update
 
     - name: 📋 Install system dependencies
@@ -61,6 +71,11 @@ jobs:
 
     - name: 🎭 Install Playwright Browsers
       run: npx playwright install chromium
+
+    - name: ✅ Verify Playwright installation
+      run: |
+        npx playwright --version
+        echo "Playwright installation completed successfully"
 
     - name: 🧪 Run Playwright tests - All
       if: ${{ inputs.test_type == 'all' || inputs.test_type == '' }}
