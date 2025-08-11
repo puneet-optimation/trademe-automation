@@ -35,7 +35,6 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: 18
-        cache: 'npm'
 
     - name: 📋 Verify package files
       run: |
@@ -43,12 +42,16 @@ jobs:
         cat package.json
         echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
         
+    - name: 🧹 Clean npm environment
+      run: |
+        # Remove existing lock file and node_modules to start fresh
+        rm -rf node_modules package-lock.json
+        npm cache clean --force
+        
     - name: 📦 Install dependencies
       run: |
-        # Verify npm cache and clean if needed
-        npm cache verify
-        # Install dependencies with exact versions from lock file
-        npm ci --no-audit --no-fund
+        # Install dependencies fresh - this will create a new lock file
+        npm install
         
     - name: 🔧 Update system packages  
       run: sudo apt-get update
