@@ -7,3 +7,4 @@ playwright/.cache/
 .DS_Store
 dist/
 build/
+package-lock.json
