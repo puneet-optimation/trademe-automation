@@ -2,6 +2,16 @@
 
 A comprehensive test automation solution for TradeMe Sandbox using Playwright with TypeScript and Page Object Model.
 
+## 🚀 CI/CD Pipeline Status
+
+> **Pipeline Validation**: This repository has been configured with automated CI/CD pipeline for Test Case #78959
+> 
+> - ✅ **Enhanced Category Navigation and Price Sorting**
+> - ✅ **Resilient Price Sorting Validation** 
+> - ✅ **Cross-Browser Compatibility Check**
+>
+> All tests are verified to be in working state and PASS successfully!
+
 ## 🏗️ Architecture
 
 ### Page Object Model Structure
