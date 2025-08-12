@@ -6,7 +6,7 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 1,
   workers: 1,
-  timeout: 60000, // 1 minute per test
+  timeout: 60000,
   expect: {
     timeout: 15000,
   },
