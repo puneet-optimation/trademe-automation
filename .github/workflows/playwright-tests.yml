@@ -6,32 +6,11 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      test_type:
-        description: 'Type of tests to run'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-        - all
-        - regression
-        - visual
-        - specific
-        - snapshots
-      test_pattern:
-        description: 'Test pattern (for specific tests)'
-        required: false
-        default: ''
-      update_snapshots:
-        description: 'Update visual regression snapshots'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   test:
-    timeout-minutes: 45
-    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
         
     steps:
     - name: 🔄 Checkout repository
@@ -41,124 +20,22 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: 18
+        cache: 'npm'
 
-    - name: 📋 Debug package files before cleanup
+    - name: 📦 Install dependencies
       run: |
-        echo "=== Before cleanup ==="
-        echo "Package.json contents:"
-        cat package.json
-        echo ""
-        echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
-        if [ -f package-lock.json ]; then
-          echo "Package-lock.json size: $(wc -c < package-lock.json) bytes"
-        fi
+        npm ci
         
-    - name: 🧹 Clean npm environment and remove corrupted files
+    - name: 🎭 Install Playwright
       run: |
-        echo "=== Cleaning npm environment ==="
-        # Remove existing lock file and node_modules to start fresh
-        rm -rf node_modules package-lock.json .npm
-        # Clean npm cache completely
-        npm cache clean --force
-        # Verify cache is clean
-        npm cache verify
-        echo "Cleanup completed successfully"
-        
-    - name: 📦 Install dependencies fresh
-      run: |
-        echo "=== Installing dependencies from scratch ==="
-        # Install dependencies fresh - this will create a new lock file with correct checksums
-        npm install --no-audit --no-fund
-        echo "Dependencies installed successfully"
-        
-    - name: 📋 Debug package files after install
-      run: |
-        echo "=== After fresh install ==="
-        echo "Package-lock.json exists: $(test -f package-lock.json && echo 'yes' || echo 'no')"
-        if [ -f package-lock.json ]; then
-          echo "Package-lock.json size: $(wc -c < package-lock.json) bytes"
-          echo "Lock file version: $(node -e "console.log(require('./package-lock.json').lockfileVersion)")"
-        fi
-        echo "Node modules: $(ls -la node_modules | wc -l) entries"
-        
-    - name: 🔧 Update system packages  
-      run: sudo apt-get update
+        npx playwright install chromium
+        npx playwright install-deps chromium
 
-    - name: 📋 Install system dependencies
+    - name: 🧪 Run Playwright tests
       run: |
-        sudo apt-get install -y \
-          libasound2-dev \
-          libatk-bridge2.0-0 \
-          libdrm2 \
-          libxkbcommon0 \
-          libxrandr2 \
-          libxdamage1 \
-          libxfixes3 \
-          libxss1 \
-          libgconf-2-4
-
-    - name: 🎭 Install Playwright system dependencies
-      run: npx playwright install-deps chromium
-
-    - name: 🎭 Install Playwright Browsers
-      run: npx playwright install chromium
-
-    - name: ✅ Verify Playwright installation
-      run: |
-        npx playwright --version
-        echo "Playwright installation completed successfully"
-
-    - name: 📂 Ensure test-results directory exists
-      run: |
-        mkdir -p test-results
-        chmod 755 test-results
-        echo "Test results directory created"
-
-    - name: 📸 Generate missing snapshots (if needed)
-      if: ${{ inputs.update_snapshots == true || inputs.test_type == 'snapshots' }}
-      run: |
-        echo "🔄 Generating/updating visual regression snapshots..."
-        npx playwright test tests/visual-regression.spec.ts --project=chromium --update-snapshots || echo "Snapshot generation completed with some warnings"
-
-    - name: 🧪 Run Playwright tests - All
-      if: ${{ inputs.test_type == 'all' || inputs.test_type == '' }}
-      run: |
-        echo "🎯 Running all tests with extended timeout..."
-        npx playwright test --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
-
-    - name: 🧪 Run Regression tests
-      if: ${{ inputs.test_type == 'regression' }}
-      run: |
-        echo "🎯 Running regression tests..."
-        npx playwright test tests/trademe-regression.spec.ts --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
-
-    - name: 🧪 Run Visual tests
-      if: ${{ inputs.test_type == 'visual' }}
-      run: |
-        echo "🎯 Running visual regression tests..."
-        npx playwright test tests/visual-regression.spec.ts --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
-
-    - name: 🧪 Run Specific tests
-      if: ${{ inputs.test_type == 'specific' && inputs.test_pattern != '' }}
-      run: |
-        echo "🎯 Running specific tests with pattern: ${{ inputs.test_pattern }}"
-        npx playwright test --grep="${{ inputs.test_pattern }}" --project=chromium --timeout=60000 --retries=1 --reporter=html,junit,json
-
-    - name: 📋 Verify test results files
-      if: always()
-      run: |
-        echo "=== Checking test results ==="
-        ls -la test-results/ || echo "No test-results directory"
-        if [ -f "test-results/results.xml" ]; then
-          echo "✅ XML results file exists ($(wc -c < test-results/results.xml) bytes)"
-        else
-          echo "❌ XML results file missing"
-        fi
-        if [ -f "test-results/results.json" ]; then
-          echo "✅ JSON results file exists ($(wc -c < test-results/results.json) bytes)"
-        else
-          echo "❌ JSON results file missing"
-        fi
+        npx playwright test --project=chromium --reporter=html,junit
+      env:
+        CI: true
 
     - name: 📊 Upload Playwright Report
       uses: actions/upload-artifact@v4
@@ -175,113 +52,3 @@ jobs:
         name: test-results
         path: test-results/
         retention-days: 30
-
-    - name: 📸 Upload Screenshots
-      uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: screenshots-${{ github.run_number }}
-        path: test-results/
-        retention-days: 7
-
-    - name: 📸 Upload Generated Snapshots
-      uses: actions/upload-artifact@v4
-      if: ${{ inputs.update_snapshots == true || inputs.test_type == 'snapshots' }}
-      with:
-        name: visual-snapshots-${{ github.run_number }}
-        path: tests/**/*-snapshots/
-        retention-days: 30
-
-  publish-results:
-    needs: [test]
-    runs-on: ubuntu-22.04
-    if: always()
-    
-    steps:
-    - name: 🔄 Checkout repository
-      uses: actions/checkout@v4
-
-    - name: 📥 Download test artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: test-results
-        path: test-results/
-      continue-on-error: true
-
-    - name: 📋 Debug downloaded artifacts
-      run: |
-        echo "=== Downloaded artifacts ==="
-        ls -la test-results/ || echo "No test-results directory downloaded"
-        if [ -f "test-results/results.xml" ]; then
-          echo "✅ XML file downloaded ($(wc -c < test-results/results.xml) bytes)"
-          echo "First few lines:"
-          head -5 test-results/results.xml
-        else
-          echo "❌ No XML file found"
-        fi
-
-    - name: 📊 Publish Test Results
-      uses: dorny/test-reporter@v1
-      if: always() && hashFiles('test-results/results.xml') != ''
-      with:
-        name: Playwright Test Results
-        path: 'test-results/results.xml'
-        reporter: java-junit
-        fail-on-error: false
-      continue-on-error: true
-
-    - name: 💬 Comment PR with Test Results
-      uses: actions/github-script@v7
-      if: github.event_name == 'pull_request'
-      with:
-        script: |
-          const fs = require('fs');
-          
-          try {
-            let comment = `## 🎭 Playwright Test Results (Chromium)\n\n`;
-            
-            if (fs.existsSync('test-results/results.json')) {
-              const results = JSON.parse(fs.readFileSync('test-results/results.json', 'utf8'));
-              
-              comment += `| Total | ✅ Passed | ❌ Failed | ⏱️ Duration |
-              |-------|----------|----------|-------------|
-              | ${results.stats?.total || 0} | ${results.stats?.passed || 0} | ${results.stats?.failed || 0} | ${Math.round((results.stats?.duration || 0) / 1000)}s |
-              
-              ${(results.stats?.failed || 0) > 0 ? '❌ Some tests failed. Check the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.' : '✅ All tests passed!'}
-              
-              📋 **Available Artifacts:**
-              - 📊 [Playwright HTML Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) 
-              - 📸 Screenshots and videos for failed tests
-              - 🔍 Trace files for debugging
-              `;
-            } else {
-              comment += `📋 **Pipeline Status:** Tests executed successfully
-              
-              📊 **Available Artifacts:**
-              - 📊 Playwright HTML Report with interactive test results
-              - 📸 Screenshots and videos for debugging
-              - 🔍 Detailed trace files
-              
-              🔗 [View detailed results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-              `;
-            }
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-          } catch (error) {
-            console.log('Could not parse test results:', error.message);
-            
-            // Fallback comment
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## 🎭 Playwright Test Results
-              
-              ✅ Tests executed successfully! Check the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for detailed results and artifacts.`
-            });
-          }
