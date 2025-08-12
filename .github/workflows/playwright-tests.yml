@@ -23,8 +23,12 @@ jobs:
         cache: 'npm'
 
     - name: 📦 Install dependencies
+      run: npm ci
+
+    - name: 📁 Create test directories
       run: |
-        npm ci
+        mkdir -p test-results
+        mkdir -p playwright-report
         
     - name: 🎭 Install Playwright
       run: |
@@ -33,9 +37,10 @@ jobs:
 
     - name: 🧪 Run Playwright tests
       run: |
-        npx playwright test --project=chromium --reporter=html,junit
+        npx playwright test --project=chromium --reporter=html,junit,line
       env:
         CI: true
+      continue-on-error: false
 
     - name: 📊 Upload Playwright Report
       uses: actions/upload-artifact@v4
@@ -52,3 +57,11 @@ jobs:
         name: test-results
         path: test-results/
         retention-days: 30
+
+    - name: 📸 Upload Screenshots
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: screenshots
+        path: test-results/
+        retention-days: 7
